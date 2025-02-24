@@ -20,7 +20,4 @@
         compatible = "zephyr,cdc-acm-uart";
     };
 
-    cdc_acm_uart1 {
-        compatible = "zephyr,cdc-acm-uart";
-    };
 };

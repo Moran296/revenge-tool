@@ -1,0 +1,27 @@
+{
+    "nrf-connect.applications": [
+        "${workspaceFolder}/application"
+    ],
+    "settings": {
+        "windows": {
+            "nrf-connect.applications": [
+                "${workspaceFolder}\\application"
+            ]
+        },
+        "linux": {
+            "nrf-connect.applications": [
+                "${workspaceFolder}/application"
+            ]
+        }
+    },
+    "nrf-connect.taskBindings": {
+        "flash": [
+            {
+                "taskName": "nRF Connect: Flash with bossac",
+                "buildConfigs": [
+                    "${workspaceFolder}/application/build"
+                ]
+            }
+        ]
+    }
+}

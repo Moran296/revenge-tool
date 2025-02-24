@@ -1,0 +1,41 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"type": "shell",
+			"label": "nRF Connect: Flash with bossac",
+			// Default (non-Windows) settings:
+			"command": "./bossac_linux_x64",
+			"args": [
+				"-p",
+				"/dev/ttyACM0",
+				"-R",
+				"-e",
+				"-w",
+				"-v",
+				"-b",
+				"application/build/zephyr/zephyr.bin"
+			],
+			"options": {
+				"cwd": "${workspaceFolder}"
+			},
+			// Windows-specific overrides:
+			"windows": {
+				"command": ".\\bossac_windows_x64.exe",
+				"args": [
+					"-p",
+					"COM16",
+					"-R",
+					"-e",
+					"-w",
+					"-v",
+					"-b",
+					"build\\zephyr\\zephyr.bin"
+				],
+				"options": {
+					"cwd": "${workspaceFolder}"
+				}
+			}
+		}
+	]
+}

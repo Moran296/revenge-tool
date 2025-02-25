@@ -17,5 +17,7 @@ Use nrf connect on phone, connect to the revenge device and send whatever to the
 - "\t" - opens terminal (linux only) - sends ctrl+alt+t
 - \"r" - opens a terminal, sleep, open rick roll url
 - "\n" - send enter
+- "\m" - rotates the mouse for 10 seconds
 - "\u[URL]" opens terminal then writes `xdg open [URL]` and sends enter 
+- "\x[URL]" like the previous but takes over the mouse and rotates it for 60 seconds
 

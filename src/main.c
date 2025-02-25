@@ -18,15 +18,16 @@
 #include <zephyr/bluetooth/uuid.h>
 #include <zephyr/bluetooth/gatt.h>
 #include <zephyr/bluetooth/hci.h>
+#include <math.h>
 
 #include <bluetooth/services/nus.h>
 
 #define LOG_LEVEL LOG_LEVEL_DBG
 LOG_MODULE_REGISTER(main);
 
-
-
-
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
 
 #define DEVICE_NAME CONFIG_BT_DEVICE_NAME
 #define DEVICE_NAME_LEN	(sizeof(DEVICE_NAME) - 1)
@@ -324,7 +325,9 @@ const struct device *hid0_dev, *hid1_dev;
 
 static void open_terminal();
 static void send_enter();
+static void rotate_mouse(int seconds);
 static void open_url(const char *url);
+
 static void write_hid(const char *data, size_t size)
 {
 	int ret;
@@ -346,11 +349,22 @@ static void write_hid(const char *data, size_t size)
 				k_sleep(K_MSEC(1000));
 				i++;
 				continue;
+			} else if (data[i + 1] == 'm') {
+				rotate_mouse(10);
+				i++;
+				continue;
 			} else if (data[i + 1] == 'u') {
 				static char url[256];
 				memcpy(url, &data[i + 2], size - i - 2);
 				url[size - i - 2] = '\0';
 				open_url(url);
+				return;
+			} else if (data[i + 1] == 'x') {
+				static char url[256];
+				memcpy(url, &data[i + 2], size - i - 2);
+				url[size - i - 2] = '\0';
+				open_url(url);
+				rotate_mouse(60);
 				return;
 			} else {
 				continue;
@@ -485,6 +499,53 @@ static void send_enter()
 	hid_int_ep_write(hid1_dev, kbd_clear, sizeof(kbd_clear), NULL);
 }
 
+
+static void rotate_mouse(int seconds)
+{
+    int64_t end_time = k_uptime_get() + (seconds * MSEC_PER_SEC);
+    float angle = 0.0f;
+    /* Increase amplitude to make movements bigger */
+    int amplitude = 200;  // Adjust amplitude for larger movement
+    /* Adjust angle_step to control the smoothness/speed of the circle */
+    float angle_step = 0.2f;  // In radians
+
+    while (k_uptime_get() < end_time) {
+        /* Calculate the x and y offsets based on a circular path */
+        int8_t x = (int8_t)(amplitude * cosf(angle));
+        int8_t y = (int8_t)(amplitude * sinf(angle));
+
+        /* Build a dynamic mouse report:
+           Byte 0: buttons (none pressed: 0x00)
+           Byte 1: X-axis movement
+           Byte 2: Y-axis movement
+           Byte 3: wheel/scroll (0x00)
+        */
+        uint8_t report[4] = {0, (uint8_t)x, (uint8_t)y, 0};
+
+        int ret = hid_int_ep_write(hid0_dev, report, sizeof(report), NULL);
+        if (ret < 0) {
+            LOG_ERR("Failed to write mouse report");
+            return;
+        }
+
+        k_sleep(K_MSEC(100));
+
+        /* Send a clear report to signal the end of this movement */
+        ret = hid_int_ep_write(hid0_dev, mouse_cmds[MOUSE_CLEAR], sizeof(mouse_cmds[MOUSE_CLEAR]), NULL);
+        if (ret < 0) {
+            LOG_ERR("Failed to write mouse clear report");
+            return;
+        }
+
+        k_sleep(K_MSEC(100));
+
+        /* Increment the angle for the next step */
+        angle += angle_step;
+        if (angle >= 2 * M_PI) {
+            angle -= 2 * M_PI;
+        }
+    }
+}
 
 
 

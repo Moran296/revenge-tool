@@ -122,10 +122,6 @@ static K_SEM_DEFINE(usb_sem, 1, 1);	/* starts off "available" */
 #define MOUSE_BTN_REPORT_POS	0
 #define MOUSE_X_REPORT_POS	1
 #define MOUSE_Y_REPORT_POS	2
-#define HID_KBD_MODIFIER_LEFT_CTRL  0x01
-#define HID_KBD_MODIFIER_LEFT_ALT   0x04
-#define HID_KEY_N 				0x31
-
 
 #define MOUSE_BTN_LEFT		BIT(0)
 #define MOUSE_BTN_RIGHT		BIT(1)
@@ -311,20 +307,54 @@ static const char toggle_caps_lock[] = {
 	0x00, 0x00, 0x00, HID_KEY_CAPSLOCK
 };
 
-static const char open_terminal[] = {
-	HID_KBD_MODIFIER_LEFT_CTRL | HID_KBD_MODIFIER_LEFT_ALT, 0x00, HID_KEY_N, 0x00,
+static const char enter_cmd[] = {
+	0x00, 0x00, HID_KEY_ENTER, 0x00,
 	0x00, 0x00, 0x00, 0x00
+};
+
+/* Build a report for ctrl+alt+n (open terminal) */
+static const uint8_t open_terminal_cmd[] = {
+	HID_KBD_MODIFIER_LEFT_CTRL | HID_KBD_MODIFIER_LEFT_ALT,  /* Modifiers */
+	0x00,                                                  /* Reserved */
+	HID_KEY_T,                                             /* 'n' key */
+	0x00, 0x00, 0x00, 0x00, 0x00                           /* Remaining bytes */
 };
 
 const struct device *hid0_dev, *hid1_dev;
 
+static void open_terminal();
+static void send_enter();
+static void open_url(const char *url);
 static void write_hid(const char *data, size_t size)
 {
 	int ret;
 	for (size_t i = 0; i < size; i++) {
-		if (data[i] == '~') {
-			// open terminal
-			ret = hid_int_ep_write(hid1_dev, open_terminal, sizeof(open_terminal), NULL);
+		if (i < size - 1 && data[i] == '\\') {
+			if (data[i + 1] == 'n') {
+				send_enter();
+				i++;
+			} else if (data[i + 1] == 't') {
+				open_terminal();
+				i++;
+			} else if (data[i + 1] == 'r') {
+				open_url("https://www.youtube.com/watch?v=xvFZjo5PgG0");
+				i++;
+			} else if (data[i + 1] == 'c') {
+				hid_int_ep_write(hid1_dev, toggle_caps_lock, sizeof(toggle_caps_lock), NULL);
+				i++;
+			} else if (data[i + 1] == 's') {
+				k_sleep(K_MSEC(1000));
+				i++;
+				continue;
+			} else if (data[i + 1] == 'u') {
+				static char url[256];
+				memcpy(url, &data[i + 2], size - i - 2);
+				url[size - i - 2] = '\0';
+				open_url(url);
+				return;
+			} else {
+				continue;
+			}
 		}
 		else {
 			int key = ascii_to_hid(data[i]);
@@ -339,7 +369,7 @@ static void write_hid(const char *data, size_t size)
 			/* Place key code in first key position (index 2) */
 			report[2] = key;
 
-			int ret = hid_int_ep_write(hid1_dev, report, sizeof(report), NULL);
+			ret = hid_int_ep_write(hid1_dev, report, sizeof(report), NULL);
 			if (ret < 0) {
 				LOG_ERR("Failed to write key press report");
 				return;
@@ -360,6 +390,7 @@ static void write_hid(const char *data, size_t size)
 		k_sleep(K_MSEC(10));
 	}
 }
+
 
 
 
@@ -423,3 +454,38 @@ int main(void)
 
 
 }
+
+
+
+// ============================ special sequences ============================
+
+static void open_url(const char *url)
+{
+	static char cmd[256];
+	int len = sprintf(cmd, "xdg-open %s", url);
+
+	open_terminal();
+	k_sleep(K_MSEC(1500));
+	write_hid(cmd, len);
+	k_sleep(K_MSEC(10));
+	send_enter();
+}
+
+static void open_terminal()
+{
+	hid_int_ep_write(hid1_dev, open_terminal_cmd, sizeof(open_terminal_cmd), NULL);
+	k_sleep(K_MSEC(10));
+	hid_int_ep_write(hid1_dev, kbd_clear, sizeof(kbd_clear), NULL);
+}
+
+static void send_enter()
+{
+	hid_int_ep_write(hid1_dev, enter_cmd, sizeof(enter_cmd), NULL);
+	k_sleep(K_MSEC(10));
+	hid_int_ep_write(hid1_dev, kbd_clear, sizeof(kbd_clear), NULL);
+}
+
+
+
+
+

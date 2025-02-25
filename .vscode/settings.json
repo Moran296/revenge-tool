@@ -21,6 +21,12 @@
                 "buildConfigs": [
                     "${workspaceFolder}/application/build"
                 ]
+            },
+            {
+                "taskName": "nRF Connect: Flash with bossac",
+                "buildConfigs": [
+                    "${workspaceFolder}\\build"
+                ]
             }
         ]
     }

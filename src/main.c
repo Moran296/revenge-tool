@@ -14,8 +14,103 @@
 #include <zephyr/usb/class/usb_hid.h>
 #include <zephyr/usb/class/usb_cdc.h>
 
+#include <zephyr/bluetooth/bluetooth.h>
+#include <zephyr/bluetooth/uuid.h>
+#include <zephyr/bluetooth/gatt.h>
+#include <zephyr/bluetooth/hci.h>
+
+#include <bluetooth/services/nus.h>
+
 #define LOG_LEVEL LOG_LEVEL_DBG
 LOG_MODULE_REGISTER(main);
+
+
+
+
+
+#define DEVICE_NAME CONFIG_BT_DEVICE_NAME
+#define DEVICE_NAME_LEN	(sizeof(DEVICE_NAME) - 1)
+
+#define UART_BUF_SIZE 500
+
+static struct bt_conn *current_conn;
+static struct bt_conn *auth_conn;
+
+static const struct bt_data ad[] = {
+	BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
+	BT_DATA(BT_DATA_NAME_COMPLETE, DEVICE_NAME, DEVICE_NAME_LEN),
+};
+
+static const struct bt_data sd[] = {
+	BT_DATA_BYTES(BT_DATA_UUID128_ALL, BT_UUID_NUS_VAL),
+};
+
+static void connected(struct bt_conn *conn, uint8_t err)
+{
+	char addr[BT_ADDR_LE_STR_LEN];
+
+	if (err) {
+		LOG_ERR("Connection failed, err 0x%02x %s", err, bt_hci_err_to_str(err));
+		return;
+	}
+
+	bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
+	LOG_INF("Connected %s", addr);
+
+	current_conn = bt_conn_ref(conn);
+}
+
+static void disconnected(struct bt_conn *conn, uint8_t reason)
+{
+	char addr[BT_ADDR_LE_STR_LEN];
+
+	bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
+
+	LOG_INF("Disconnected: %s, reason 0x%02x %s", addr, reason, bt_hci_err_to_str(reason));
+
+	if (auth_conn) {
+		bt_conn_unref(auth_conn);
+		auth_conn = NULL;
+	}
+
+	if (current_conn) {
+		bt_conn_unref(current_conn);
+		current_conn = NULL;
+	}
+}
+
+BT_CONN_CB_DEFINE(conn_callbacks) = {
+	.connected    = connected,
+	.disconnected = disconnected,
+};
+
+static struct bt_conn_auth_cb conn_auth_callbacks;
+static struct bt_conn_auth_info_cb conn_auth_info_callbacks;
+
+static void write_hid(const char *data, size_t size);
+
+static char keys_buffer[UART_BUF_SIZE];
+static uint16_t keys_len;
+struct k_work send_keys_work;
+
+static void send_keys(struct k_work *work)
+{
+	write_hid(keys_buffer, keys_len);
+}
+
+
+static void bt_receive_cb(struct bt_conn *conn, const uint8_t *const data,
+			  uint16_t len)
+{
+	memcpy(keys_buffer, data, len);
+	keys_len = len;
+	k_work_submit(&send_keys_work);
+}
+
+static struct bt_nus_cb nus_cb = {
+	.received = bt_receive_cb,
+};
+
 
 /* HID */
 
@@ -27,6 +122,10 @@ static K_SEM_DEFINE(usb_sem, 1, 1);	/* starts off "available" */
 #define MOUSE_BTN_REPORT_POS	0
 #define MOUSE_X_REPORT_POS	1
 #define MOUSE_Y_REPORT_POS	2
+#define HID_KBD_MODIFIER_LEFT_CTRL  0x01
+#define HID_KBD_MODIFIER_LEFT_ALT   0x04
+#define HID_KEY_N 				0x31
+
 
 #define MOUSE_BTN_LEFT		BIT(0)
 #define MOUSE_BTN_RIGHT		BIT(1)
@@ -212,34 +311,46 @@ static const char toggle_caps_lock[] = {
 	0x00, 0x00, 0x00, HID_KEY_CAPSLOCK
 };
 
+static const char open_terminal[] = {
+	HID_KBD_MODIFIER_LEFT_CTRL | HID_KBD_MODIFIER_LEFT_ALT, 0x00, HID_KEY_N, 0x00,
+	0x00, 0x00, 0x00, 0x00
+};
+
 const struct device *hid0_dev, *hid1_dev;
 
-static void write_hid(const struct device *dev, const char *data, size_t size)
+static void write_hid(const char *data, size_t size)
 {
+	int ret;
 	for (size_t i = 0; i < size; i++) {
-		int key = ascii_to_hid(data[i]);
-		if (key < 0) {
-			continue;  // Skip unsupported characters
+		if (data[i] == '~') {
+			// open terminal
+			ret = hid_int_ep_write(hid1_dev, open_terminal, sizeof(open_terminal), NULL);
 		}
-		uint8_t report[8] = {0};  // [modifier, reserved, key1, key2, ..., key6]
+		else {
+			int key = ascii_to_hid(data[i]);
+			if (key < 0) {
+				continue;  // Skip unsupported characters
+			}
+			uint8_t report[8] = {0};  // [modifier, reserved, key1, key2, ..., key6]
 
-		if (needs_shift(data[i])) {
-			report[0] |= HID_KBD_MODIFIER_RIGHT_SHIFT;
-		}
-		/* Place key code in first key position (index 2) */
-		report[2] = key;
+			if (needs_shift(data[i])) {
+				report[0] |= HID_KBD_MODIFIER_RIGHT_SHIFT;
+			}
+			/* Place key code in first key position (index 2) */
+			report[2] = key;
 
-		int ret = hid_int_ep_write(dev, report, sizeof(report), NULL);
-		if (ret < 0) {
-			LOG_ERR("Failed to write key press report");
-			return;
+			int ret = hid_int_ep_write(hid1_dev, report, sizeof(report), NULL);
+			if (ret < 0) {
+				LOG_ERR("Failed to write key press report");
+				return;
+			}
 		}
 
 		/* Small delay to simulate key press duration */
 		k_sleep(K_MSEC(10));
 
 		/* Send release report */
-		ret = hid_int_ep_write(dev, kbd_clear, sizeof(kbd_clear), NULL);
+		ret = hid_int_ep_write(hid1_dev, kbd_clear, sizeof(kbd_clear), NULL);
 		if (ret < 0) {
 			LOG_ERR("Failed to write key release report");
 			return;
@@ -269,6 +380,8 @@ int main(void)
 		return 0;
 	}
 
+	k_work_init(&send_keys_work, send_keys);
+
 	/* Initialize HID devices */
 	usb_hid_register_device(hid0_dev, hid_mouse_report_desc,
 				sizeof(hid_mouse_report_desc), &ops);
@@ -278,29 +391,35 @@ int main(void)
 	usb_hid_init(hid0_dev);
 	usb_hid_init(hid1_dev);
 
+
 	ret = usb_enable(status_cb);
 	if (ret != 0) {
 		LOG_ERR("Failed to enable USB");
 		return 0;
 	}
 
-	/* Wait 1 sec for the host to complete setup */
 	k_busy_wait(USEC_PER_SEC);
 	k_sleep(K_MSEC(1000));
 
-	/* Send some mouse movements */
-	hid_int_ep_write(hid0_dev, mouse_cmds[MOUSE_UP], sizeof(mouse_cmds[MOUSE_UP]), NULL);
-	k_sleep(K_MSEC(1000));
-	hid_int_ep_write(hid0_dev, mouse_cmds[MOUSE_UP], sizeof(mouse_cmds[MOUSE_UP]), NULL);
-	k_sleep(K_MSEC(1000));
-	hid_int_ep_write(hid0_dev, mouse_cmds[MOUSE_UP], sizeof(mouse_cmds[MOUSE_UP]), NULL);
 
-	const char *s = "hello world!\n";
-	while (1) {
-		k_sleep(K_MSEC(5000));
-		k_sem_take(&usb_sem, K_FOREVER);
-
-		/* Write string to keyboard HID device */
-		write_hid(hid1_dev, s, strlen(s));
+	ret = bt_enable(NULL);
+	if (ret) {
+		return 0;
 	}
+
+
+	ret = bt_nus_init(&nus_cb);
+	if (ret) {
+		LOG_ERR("Failed to initialize UART service (err: %d)", ret);
+		return 0;
+	}
+
+
+	ret = bt_le_adv_start(BT_LE_ADV_CONN_ONE_TIME, ad, ARRAY_SIZE(ad), sd, ARRAY_SIZE(sd));
+	if (ret) {
+		LOG_ERR("Advertising failed to start (err %d)", ret);
+		return 0;
+	}
+
+
 }

@@ -1,7 +1,8 @@
 # Revenge tool
 
 
-This is a small hid tool that receives the text to insert from BLE NUS.
+This is a small hid tool that receives the text to insert from BLE NUS (Rubber Ducky)
+on an arduino nano ble
 
 Every thing you send to the RX char will be output as hid through USB.
 The idea is to plug it to the pc without it being visible which fits stationary PCs

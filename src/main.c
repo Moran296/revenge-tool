@@ -35,7 +35,11 @@ LOG_MODULE_REGISTER(main);
 #define UART_BUF_SIZE 500
 
 static struct bt_conn *current_conn;
-static struct bt_conn *auth_conn;
+
+K_THREAD_STACK_DEFINE(my_stack_area, 1024 * 4);
+struct k_work_q my_work_q;
+
+
 
 static const struct bt_data ad[] = {
 	BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
@@ -69,24 +73,18 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 
 	LOG_INF("Disconnected: %s, reason 0x%02x %s", addr, reason, bt_hci_err_to_str(reason));
 
-	if (auth_conn) {
-		bt_conn_unref(auth_conn);
-		auth_conn = NULL;
-	}
-
 	if (current_conn) {
 		bt_conn_unref(current_conn);
 		current_conn = NULL;
 	}
+
+	bt_le_adv_start(BT_LE_ADV_CONN, ad, ARRAY_SIZE(ad), sd, ARRAY_SIZE(sd));
 }
 
 BT_CONN_CB_DEFINE(conn_callbacks) = {
 	.connected    = connected,
 	.disconnected = disconnected,
 };
-
-static struct bt_conn_auth_cb conn_auth_callbacks;
-static struct bt_conn_auth_info_cb conn_auth_info_callbacks;
 
 static void write_hid(const char *data, size_t size);
 
@@ -105,7 +103,7 @@ static void bt_receive_cb(struct bt_conn *conn, const uint8_t *const data,
 {
 	memcpy(keys_buffer, data, len);
 	keys_len = len;
-	k_work_submit(&send_keys_work);
+	k_work_submit_to_queue(&my_work_q, &send_keys_work);
 }
 
 static struct bt_nus_cb nus_cb = {
@@ -412,6 +410,12 @@ int main(void)
 {
 	int ret;
 
+	k_work_queue_init(&my_work_q);
+
+	k_work_queue_start(&my_work_q, my_stack_area,
+                   K_THREAD_STACK_SIZEOF(my_stack_area), 2,
+                   NULL);
+
 	/* Configure devices */
 	hid0_dev = device_get_binding("HID_0");
 	if (hid0_dev == NULL) {
@@ -460,7 +464,7 @@ int main(void)
 	}
 
 
-	ret = bt_le_adv_start(BT_LE_ADV_CONN_ONE_TIME, ad, ARRAY_SIZE(ad), sd, ARRAY_SIZE(sd));
+	ret = bt_le_adv_start(BT_LE_ADV_CONN, ad, ARRAY_SIZE(ad), sd, ARRAY_SIZE(sd));
 	if (ret) {
 		LOG_ERR("Advertising failed to start (err %d)", ret);
 		return 0;

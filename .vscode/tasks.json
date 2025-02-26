@@ -14,7 +14,7 @@
 				"-w",
 				"-v",
 				"-b",
-				"application/build/zephyr/zephyr.bin"
+				"build/zephyr/zephyr.bin"
 			],
 			"options": {
 				"cwd": "${workspaceFolder}"
